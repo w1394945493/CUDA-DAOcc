@@ -147,10 +147,64 @@ def trilinear_grid_sample(im, grid, align_corners=False):
     return out.view(N, C, Dg, Hg, Wg)
 
 
+def nearest_grid_sample(im, grid, align_corners=False):
+    """
+    Nearest-neighbor sampling for 5D input (N, C, D, H, W) using 3D normalized grid (N, Dg, Hg, Wg, 3)
+    """
+    N, C, D, H, W = im.shape
+    _, Dg, Hg, Wg, _ = grid.shape
+    x = grid[..., 0]
+    y = grid[..., 1]
+    z = grid[..., 2]
+
+    if align_corners:
+        x = ((x + 1) / 2) * (W - 1)
+        y = ((y + 1) / 2) * (H - 1)
+        z = ((z + 1) / 2) * (D - 1)
+    else:
+        x = ((x + 1) * W - 1) / 2
+        y = ((y + 1) * H - 1) / 2
+        z = ((z + 1) * D - 1) / 2
+
+    # Flatten grid
+    x = x.view(N, -1)
+    y = y.view(N, -1)
+    z = z.view(N, -1)
+
+    # Round to nearest neighbor
+    x0 = torch.round(x).long()
+    y0 = torch.round(y).long()
+    z0 = torch.round(z).long()
+
+    # Pad feature map
+    im_padded = F.pad(im, pad=[1, 1, 1, 1, 1, 1], mode='constant', value=0)
+    Dp, Hp, Wp = D + 2, H + 2, W + 2
+
+    # Shift indices for padding
+    x0p = x0 + 1
+    y0p = y0 + 1
+    z0p = z0 + 1
+
+    # Clip to valid range
+    x0p = x0p.clamp(0, Wp - 1)
+    y0p = y0p.clamp(0, Hp - 1)
+    z0p = z0p.clamp(0, Dp - 1)
+
+    im_flat = im_padded.view(N, C, -1)
+
+    def lin_idx(xi, yi, zi):
+        return (zi * Hp * Wp + yi * Wp + xi).unsqueeze(1).expand(-1, C, -1)
+
+    idx = lin_idx(x0p, y0p, z0p)
+    out = torch.gather(im_flat, 2, idx)
+    return out.view(N, C, Dg, Hg, Wg)
+
+
 class SubclassCameraModule(nn.Module):
-    def __init__(self, model):
+    def __init__(self, model, mode='bilinear'):
         super(SubclassCameraModule, self).__init__()
         self.model = model
+        self.mode = mode
 
     def forward(self, x, img_ref_points):
         B, N, C, H, W = x.size()
@@ -173,7 +227,12 @@ class SubclassCameraModule(nn.Module):
         else:
             x = einops.rearrange(x, 'B N C H W -> B C N H W')
 
-        sampling_feats = trilinear_grid_sample(x, img_ref_points, align_corners=True)
+        if self.mode == 'bilinear':
+            sampling_feats = trilinear_grid_sample(x, img_ref_points, align_corners=True)
+        elif self.mode == 'nearest':
+            sampling_feats = nearest_grid_sample(x, img_ref_points, align_corners=True)
+        else:
+            raise NotImplementedError
         sampling_feats = einops.rearrange(sampling_feats,
                                           'b c num_points 1 1 -> b num_points c',
                                           b=B)
@@ -192,6 +251,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Export DAOcc model")
     parser.add_argument('--ckpt', type=str, default='model/daocc_ptq.pth')
     parser.add_argument('--fp16', action='store_true')
+    parser.add_argument('--mode', type=str, default='bilinear')
     args = parser.parse_args()
     return args
 
@@ -210,7 +270,7 @@ def main():
     img = data["img"].data[0].cuda()
     img_ref_points = torch.zeros([1, 324000, 1, 1, 3]).cuda()
 
-    camera_model = SubclassCameraModule(model)
+    camera_model = SubclassCameraModule(model, args.mode)
     camera_model.cuda().eval()
 
     with torch.no_grad():

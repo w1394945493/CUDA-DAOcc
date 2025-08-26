@@ -3,7 +3,7 @@
 This repository contains sources and model for [DAOcc](https://github.com/AlphaPlusTT/DAOcc) inference using CUDA & TensorRT.
 
 ## 3D Object Detection and Occupancy prediction
-- We use the [daocc_occ3d_wo_mask_v2.yaml](https://github.com/AlphaPlusTT/DAOcc/blob/master/configs/nuscenes/occ3d/daocc_occ3d_wo_mask_v2.yaml) configuration for TensorRT.
+- We use the [daocc_occ3d_nus_w_mask.yaml](https://github.com/AlphaPlusTT/DAOcc/blob/master/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask.yaml) configuration for TensorRT.
 
 | **Model** | **Framework** | **Precision** | **mAP** | **NDS** | **mIoU** | **FPS** | **FPS(wo det)** |
 |:---------:|:-------------:|:-------------:|:-------:|:-------:|:--------:|:-------:|:---------------:|
@@ -15,7 +15,7 @@ This repository contains sources and model for [DAOcc](https://github.com/AlphaP
   - Please refer to the readme of [3DSparseConvolution](/libraries/3DSparseConvolution/README.md) for more details.
 
 ## Model and Data
-- The model trained with [daocc_occ3d_wo_mask_v2.yaml](https://github.com/AlphaPlusTT/DAOcc/blob/master/configs/nuscenes/occ3d/daocc_occ3d_wo_mask_v2.yaml) can be downloaded from [Google Drive](https://drive.google.com/file/d/1C4pRy1eaHgulYPi2qFo8kJrqmBKhxeYo/view?usp=sharing).
+- The model trained with [daocc_occ3d_nus_w_mask.yaml](https://github.com/AlphaPlusTT/DAOcc/blob/master/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask.yaml) can be downloaded from [Google Drive](https://drive.google.com/file/d/1C4pRy1eaHgulYPi2qFo8kJrqmBKhxeYo/view?usp=sharing).
 - For quick practice, we provide example data from nuScenes. You can download it from [Google Drive](https://drive.google.com/file/d/158ChxGu1Q27ED3SmCBbw4REjbl4KNrWI/view?usp=sharing). It contains the following:
   1. Camera images from 6 directions.
   2. Projected fixed 3D voxel center points into the surround-view camera pixel coordinate system and normalized to the [-1, 1] range `img_ref_points.bin`.
