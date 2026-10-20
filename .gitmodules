@@ -1,6 +1,6 @@
 [submodule "DAOcc"]
 	path = DAOcc
-	url = https://github.com/AlphaPlusTT/DAOcc.git
+	url = https://github.com/w1394945493/DAOcc.git
 [submodule "dependencies/pybind11"]
 	path = dependencies/pybind11
 	url = https://github.com/pybind/pybind11.git
