@@ -201,49 +201,63 @@ def nearest_grid_sample(im, grid, align_corners=False):
 
 
 class SubclassCameraModule(nn.Module):
+    #* 这是用于 ONNX 导出的相机分支包装器。torch.onnx.export 只追踪本类 forward 实际执行的运算，
+    #* 因而即使 self.model 指向完整 DAOcc，未在 forward 中调用的 LiDAR、fuser、decoder 和 heads
+    #* 都不会写入 camera.backbone.onnx。
     def __init__(self, model, mode='bilinear'):
         super(SubclassCameraModule, self).__init__()
+        # 保存完整模型只是为了访问其中已经加载好权重的相机子模块及 vtransform 配置。
         self.model = model
         self.mode = mode
 
     def forward(self, x, img_ref_points):
+        # 输入 x 为 [batch, 6路相机, RGB, height, width]，先合并 batch 和相机维度。
         B, N, C, H, W = x.size()
         x = x.view(B * N, C, H, W)
 
+        #* ONNX 的神经网络部分从这里开始：只执行相机 ResNet backbone 和 FPN neck。
         x = self.model.encoders.camera.backbone(x)
         x = self.model.encoders.camera.neck(x)
 
+        # FPN 可能返回多层特征列表，本配置只使用第一层特征。
         if not isinstance(x, torch.Tensor):
             x = x[0]
 
+        # 恢复 batch 和六路相机维度，供后续体素采样使用。
         BN, C, H, W = x.size()
         x = x.view(B, int(BN / B), C, H, W)
 
         B = x.shape[0]
         if self.model.encoders.camera.vtransform.transfer_conv is not None:
+            # 使用 vtransform 中训练好的 1x1 卷积调整相机特征通道数。
             x = einops.rearrange(x, 'B N C H W -> (B N) C H W')
             x = self.model.encoders.camera.vtransform.transfer_conv(x)
             x = einops.rearrange(x, '(B N) C H W -> B C N H W', B=B)
         else:
             x = einops.rearrange(x, 'B N C H W -> B C N H W')
 
+        #* 根据 img_ref_points 从六路二维图像特征中采样固定三维体素中心对应的特征。
         if self.mode == 'bilinear':
             sampling_feats = trilinear_grid_sample(x, img_ref_points, align_corners=True)
         elif self.mode == 'nearest':
             sampling_feats = nearest_grid_sample(x, img_ref_points, align_corners=True)
         else:
             raise NotImplementedError
+        # 将采样结果整理为 [batch, 三维采样点数量, channel]。
         sampling_feats = einops.rearrange(sampling_feats,
                                           'b c num_points 1 1 -> b num_points c',
                                           b=B)
 
+        #* 按 vtransform 的 z/h/w 网格恢复体素结构，并把高度 z 合并进通道，形成二维 BEV 特征。
         feats_volume = einops.rearrange(sampling_feats,
                                         'bs (z h w) c -> bs (z c) w h',
                                         z=self.model.encoders.camera.vtransform.volume_size[2],
                                         h=self.model.encoders.camera.vtransform.volume_size[0],
                                         w=self.model.encoders.camera.vtransform.volume_size[1])
         if self.model.encoders.camera.vtransform.down_sample is not None:
+            # 执行训练模型中的下采样层，使输出尺寸和后续 fuser 需要的尺寸一致。
             feats_volume = self.model.encoders.camera.vtransform.down_sample(feats_volume)
+        #* 此处 return 就是 ONNX 图的边界；返回 camera_feature 后不会继续执行 fuser 或预测头。
         return feats_volume
 
 
@@ -265,8 +279,10 @@ def parse_args():
 
 
 def main():
+    # 读取输入权重、示例数据、精度模式、采样模式和输出目录。
     args = parse_args()
 
+    # 将用户路径展开为绝对路径，并在加载前检查文件。
     checkpoint_path = os.path.abspath(os.path.expanduser(args.ckpt))
     example_data_path = os.path.abspath(os.path.expanduser(args.example_data))
     if not os.path.isfile(checkpoint_path):
@@ -274,42 +290,76 @@ def main():
     if not os.path.isfile(example_data_path):
         raise FileNotFoundError(f"Example data does not exist: {example_data_path}")
 
+    # PTQ 文件保存的是 MMDataParallel 包装后的模型，.module 取出实际 DAOcc 网络。
     model = torch.load(checkpoint_path).module
+    #* 默认保留 PTQ 量化节点，供 TensorRT 构建 INT8+FP16 混合精度引擎。
     default_output_dir = "model/resnet50-int8"
     if args.fp16:
+        #* 指定 --fp16 时关闭全部伪量化器，导出不含 INT8 Q/DQ 约束的版本。
         default_output_dir = "model/resnet50"
         quantize.disable_quantization(model).apply()
-    # 用户显式指定输出目录时，不再受 fp16/int8 默认目录名称限制。
+    # 创建最终 ONNX 输出目录；显式参数优先于默认目录。
     save_root = os.path.abspath(os.path.expanduser(
         args.output_dir if args.output_dir is not None else default_output_dir))
     os.makedirs(save_root, exist_ok=True)
 
+    # 示例文件提供真实六路相机张量，用于确定 ONNX 输入形状和前向路径。
     data = torch.load(example_data_path)
     img = data["img"].data[0].cuda()
+    #* 该输入表示投影到图像特征上的采样坐标；此处零值只用于追踪固定形状，
+    #* 实际 C++ 推理会传入当前样例的 img_ref_points.bin。
     img_ref_points = torch.zeros([1, 324000, 1, 1, 3]).cuda()
 
+    #* model 虽是完整 DAOcc，但实际传给 ONNX 导出器的是包装器 camera_model；
+    #* 导出边界由 SubclassCameraModule.forward 的调用链和 return 位置决定。
     camera_model = SubclassCameraModule(model, args.mode)
+    # 放到 GPU 并进入推理模式，关闭 BatchNorm/Dropout 的训练行为。
     camera_model.cuda().eval()
 
+    # 导出只执行前向传播，不计算梯度，也不生成反向传播计算图。
     with torch.no_grad():
+        # 拼出相机 ONNX 的最终保存路径，例如 <output-dir>/camera.backbone.onnx。
         camera_backbone_onnx = f"{save_root}/camera.backbone.onnx"
+
+        # 让 pytorch-quantization 使用 ONNX 可识别的 fake-quant 表达方式。
+        # 启用后，校准得到的 scale 会导出为onnx中的 QuantizeLinear/DequantizeLinear（Q/DQ）节点，
+        # 后续 TensorRT 根据这些 Q/DQ 节点决定可使用 INT8 的区段及其量化范围。
+        # TensorRT构建.plan 时读取这些 scale，决定网络中哪些张量使用 INT8，以及如何在 INT8 和 FP16 之间转换。
         TensorQuantizer.use_fb_fake_quant = True
+
+        #* 调用 PyTorch ONNX 导出器：它会用下面的示例输入执行一次 camera_model.forward，
+        #* 并把这次前向实际经过的算子、连接关系和所用权重记录成 ONNX 计算图。
         torch.onnx.export(
+            # 被追踪的 nn.Module；导出范围由 SubclassCameraModule.forward 决定。
             camera_model,
+            # 按 forward(x, img_ref_points) 的参数顺序提供两份示例输入。
             (img, img_ref_points),
+            # 指定生成的 ONNX 文件路径。
             camera_backbone_onnx,
+            # 给两个输入张量命名，C++/TensorRT 会按这些名字绑定输入。
             input_names=["img", "img_ref_points"],
+            # 给 forward 返回的相机 BEV 特征命名，作为引擎输出绑定名。
             output_names=["camera_feature"],
+            # 使用 ONNX opset 13 表达算子；该版本与本项目导出逻辑和 TensorRT 8.5兼容。
             opset_version=13,
+            # 导出时提前计算纯常量子图，例如固定 shape 计算，以减少运行时节点。
             do_constant_folding=True,
+            # 如需排查导出图，可取消下一行注释打印完整 ONNX 节点信息；正常运行无需开启。
             # verbose=True,
         )
+
+        # 重新从磁盘读取刚导出的原始 ONNX，得到可供 onnxsim 处理的 ModelProto。
         onnx_orig = onnx.load(camera_backbone_onnx)
+        # simplify 返回简化后的模型和校验结果；它会消除部分冗余 reshape、常量和恒等节点。
         onnx_simp, check = simplify(onnx_orig)
+        # 校验不通过就立即停止，避免用可能不等价的简化图继续构建 TensorRT 引擎。
         assert check, "Simplified ONNX model could not be validated"
+        #* 用简化后的模型覆盖原始 ONNX；build_trt_engine.sh 随后将它转成 camera.backbone.plan。
         onnx.save(onnx_simp, camera_backbone_onnx)
+        # 在终端报告导出完成及实际保存位置。
         print(f"🚀 The export is completed. ONNX save as {camera_backbone_onnx} 🤗, Have a nice day~")
 
 
+# 只有直接执行本文件时才调用 main；作为模块导入时不会自动开始导出。
 if __name__ == "__main__":
     main()
