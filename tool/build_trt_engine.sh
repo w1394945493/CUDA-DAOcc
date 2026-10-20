@@ -21,19 +21,54 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+#* 先解析命令行参数，使其优先于 environment.sh 中的默认配置。
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --model-dir)
+            if [ $# -lt 2 ]; then
+                echo "Error: --model-dir requires a path."
+                exit 2
+            fi
+            DEBUG_MODEL_DIR=$2
+            shift 2
+            ;;
+        --precision)
+            if [ $# -lt 2 ]; then
+                echo "Error: --precision requires fp16 or int8."
+                exit 2
+            fi
+            DEBUG_PRECISION=$2
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: bash tool/build_trt_engine.sh [--model-dir PATH] [--precision fp16|int8]"
+            exit 0
+            ;;
+        *)
+            echo "Error: unknown argument: $1"
+            exit 2
+            ;;
+    esac
+done
+
 # configure the environment
 . tool/environment.sh
 
 if [ "$ConfigurationStatus" != "Success" ]; then
     echo "Exit due to configure failure."
-    exit
+    exit 1
+fi
+
+if [ "$DEBUG_PRECISION" != "fp16" ] && [ "$DEBUG_PRECISION" != "int8" ]; then
+    echo "Error: --precision must be fp16 or int8."
+    exit 2
 fi
 
 # tensorrt version
 # version=`trtexec | grep -m 1 TensorRT | sed -n "s/.*\[TensorRT v\([0-9]*\)\].*/\1/p"`
 
-# resnet50/resnet50-int8/swint-tiny
-base=model/$DEBUG_MODEL
+#* 支持通过 DEBUG_MODEL_DIR 使用仓库外部的模型目录，并保留原目录规则作为默认值。
+base=${DEBUG_MODEL_DIR:-model/$DEBUG_MODEL}
 
 # fp16/int8
 precision=$DEBUG_PRECISION

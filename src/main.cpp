@@ -158,8 +158,9 @@ static void free_images(std::vector<unsigned char*>& images) {
 //                  scene_device_image.to_host(stream).ptr(), 100);
 // }
 
-std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std::string& precision) {
-  printf("Create by %s, %s\n", model.c_str(), precision.c_str());
+std::shared_ptr<bevfusion::Core> create_core(const std::string& model_dir, const std::string& precision) {
+  // * model_dir 可直接指向仓库外部模型目录，不再强制使用 model/<模型名>。
+  printf("Create by %s, %s\n", model_dir.c_str(), precision.c_str());
   bevfusion::camera::NormalizationParameter normalization;
   normalization.image_width = 1600;
   normalization.image_height = 900;
@@ -186,7 +187,7 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
 
   bevfusion::lidar::SCNParameter scn;
   scn.voxelization = voxelization;
-  scn.model = nv::format("model/%s/lidar.backbone.xyz.onnx", model.c_str());
+  scn.model = nv::format("%s/lidar.backbone.xyz.onnx", model_dir.c_str());
   scn.order = bevfusion::lidar::CoordinateOrder::XYZ;
 
   if (precision == "int8") {
@@ -221,23 +222,23 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
   // transbbox.sorted_bboxes = true;
 
   bevfusion::CoreParameter param;
-  param.camera_model = nv::format("model/%s/build/camera.backbone.plan", model.c_str());
+  param.camera_model = nv::format("%s/build/camera.backbone.plan", model_dir.c_str());
   param.normalize = normalization;
   param.lidar_scn = scn;
   // param.geometry = geometry;
-  param.transfusion = nv::format("model/%s/build/fuser.plan", model.c_str());
+  param.transfusion = nv::format("%s/build/fuser.plan", model_dir.c_str());
   // param.transbbox = transbbox;
   // param.camera_vtransform = nv::format("model/%s/build/camera.vtransform.plan", model.c_str());
 
   bevfusion::head::occ::OccParameter occ;
-  occ.model = nv::format("model/%s/build/head.occ.plan", model.c_str());
+  occ.model = nv::format("%s/build/head.occ.plan", model_dir.c_str());
   occ.x_res = 200;
   occ.y_res = 200;
   occ.z_res = 16;
   param.occ = occ;
 
   bevfusion::head::object::CenterHeadParameter object;
-  object.model = nv::format("model/%s/build/head.object.plan", model.c_str());
+  object.model = nv::format("%s/build/head.object.plan", model_dir.c_str());
   object.score_threshold = 0.45;
   param.object = object;
 
@@ -307,6 +308,7 @@ int main(int argc, char **argv)
   const char *data = "example-data";
   const char *model = "resnet50int8";
   const char *precision = "int8";
+  std::string model_dir;
 
   if (argc > 1)
     data = argv[1];
@@ -314,11 +316,16 @@ int main(int argc, char **argv)
     model = argv[2];
   if (argc > 3)
     precision = argv[3];
+  // * 第四个参数可指定完整模型目录；空值时兼容原来的 model/<模型名> 目录结构。
+  if (argc > 4 && strlen(argv[4]) > 0)
+    model_dir = argv[4];
+  else
+    model_dir = nv::format("model/%s", model);
   // dlopen("libcustom_layernorm.so", RTLD_NOW);
   // 显式加载插件库
   // loadPluginLibrary("/home/cf206/project/Lidar_AI_Solution/amirstan_plugin/build/lib/libamirstan_plugin.so");
 
-  auto core = create_core(model, precision);
+  auto core = create_core(model_dir, precision);
   if (core == nullptr)
   {
     printf("Core has been failed.\n");

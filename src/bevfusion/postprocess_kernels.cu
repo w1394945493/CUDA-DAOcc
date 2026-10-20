@@ -78,8 +78,12 @@ __global__ void predictKernel(
 
         if(score < score_threshold) continue;
 
+        // * 原项目的检测头特征按 [W, H] 约定排列，因此 h 对应 x、w 对应 y，保留并继续使用原代码。
         auto xs = __half2float(reg[n * C_reg * HW + h * W + w]) + h;  // TODO: Check whether xs and ys need to be replaced
         auto ys = __half2float(reg[n * C_reg * HW + HW + h * W + w]) + w;
+        // * 常规 [H, W]=[Y, X] 排列的写法保留作对照；本项目启用它会错误交换检测框坐标。
+        // auto xs = __half2float(reg[n * C_reg * HW + h * W + w]) + w;
+        // auto ys = __half2float(reg[n * C_reg * HW + HW + h * W + w]) + h;
 
         xs = xs * out_size_factor * voxel_size[0] + pc_range[0];
         ys = ys * out_size_factor * voxel_size[1] + pc_range[1];
@@ -336,7 +340,10 @@ int postprocess_launch(
                     cudaStream_t stream)
 {
     dim3 threads(32);
-    dim3 blocks(H * W + threads.x - 1/ threads.x);
+    // * 原代码因缺少整体括号，实际不能正确执行向上取整，保留如下。
+    // dim3 blocks(H * W + threads.x - 1/ threads.x);
+    // * 修正代码：向上取整计算 block 数量，避免启动约 32 倍的无效线程。
+    dim3 blocks((H * W + threads.x - 1) / threads.x);
 
     predictKernel<<<blocks, threads, 0, stream>>>(N, H, W, C_reg, C_height, C_dim, C_rot, C_vel, C_hm,
                                                   reg, height, dim, rot, vel, hm, detection_num, detections,

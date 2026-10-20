@@ -90,13 +90,25 @@ def main():
     parser.add_argument("--config", metavar="FILE", default="DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_wo_mask_v2.yaml", help="config file")
     parser.add_argument("--ckpt", default="model/daocc.pth", help="the checkpoint file to resume from")
     parser.add_argument("--calibrate_batch", type=int, default=300, help="calibrate batch")
+    # 可指定校准后模型的文件路径；不传时沿用原来的默认保存位置。
+    parser.add_argument(
+        "--save-path", type=str, default="model/daocc_ptq.pth",
+        help="output path for the calibrated PyTorch model",
+    )
     args = parser.parse_args()
+    if not args.save_path.strip():
+        parser.error("--save-path must not be empty")
 
     args.ptq_only = True
     configs.load(args.config, recursive=True)
     cfg = Config(recursive_eval(configs), filename=args.config)
 
-    save_path = 'model/daocc_ptq.pth'
+    # 原固定路径保留为注释；展开 ~ 并转换为绝对路径，兼容只填写文件名。
+    # save_path = 'model/daocc_ptq.pth'
+    save_path = os.path.abspath(os.path.expanduser(args.save_path))
+    if os.path.isdir(save_path):
+        raise IsADirectoryError(f"--save-path must be a file path: {save_path}")
+    # 保存前自动创建父目录，日志显示最终实际写入的位置。
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
     # set random seeds
@@ -141,9 +153,10 @@ def main():
     quantize.disable_quantization(model.module.decoder.neck.up).apply()
     quantize.print_quantizer_status(model)
     
-    print(f"Done due to ptq only! Save checkpoint to {save_path} 🤗")
     model.module.encoders.lidar.backbone = funcs.fuse_relu_only(model.module.encoders.lidar.backbone)
     torch.save(model, save_path)
+    # 只有文件成功写入后才报告保存完成。
+    print(f"Calibrated model saved to {save_path}")
     return
 
 if __name__ == "__main__":

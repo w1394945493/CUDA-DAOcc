@@ -37,8 +37,9 @@ message(STATUS "spconv_lib = ${spconv_lib}")
 
 if("$ENV{SPCONV_CUDA_VERSION}" EQUAL "11.4")
   # For cuda 11.x
-  set(CMAKE_CXX_FLAGS_RELEASE "-std=c++14 -Wextra -Wall -Wno-missing-field-initializers -Wno-deprecated-declarations -O3 -DENABLE_TEXT_BACKEND_STB -Wno-unused-parameter")
-  set(CMAKE_CXX_FLAGS_DEBUG   "-std=c++14 -O0 -g -DENABLE_TEXT_BACKEND_STB")
+  #* CUDA 11.8、GCC 11 和新版 Thrust/CUB 需要统一使用 C++17，避免标准库 constexpr 变量重定义。
+  set(CMAKE_CXX_FLAGS_RELEASE "-std=c++17 -Wextra -Wall -Wno-missing-field-initializers -Wno-deprecated-declarations -O3 -DENABLE_TEXT_BACKEND_STB -Wno-unused-parameter")
+  set(CMAKE_CXX_FLAGS_DEBUG   "-std=c++17 -O0 -g -DENABLE_TEXT_BACKEND_STB")
 else()
   # For cuda 12.x
   set(CMAKE_CXX_FLAGS_RELEASE "-std=c++17 -Wextra -Wall -Wno-missing-field-initializers -Wno-deprecated-declarations -O3 -DENABLE_TEXT_BACKEND_STB -Wno-unused-parameter")
@@ -46,6 +47,8 @@ else()
 endif()
 
 set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} 
+  #* 将语言标准直接传给 NVCC 前端，不能只通过 -Xcompiler 传给宿主编译器。
+  -std=c++17
   -gencode arch=compute_$ENV{CUDASM},code=compute_$ENV{CUDASM}
 )
 

@@ -225,13 +225,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export transfusion to onnx file")
     parser.add_argument("--ckpt", type=str, default="model/daocc_ptq.pth", help="Pretrain model")
     parser.add_argument('--fp16', action='store_true')
+    # 可指定全部 fuser/head ONNX 的输出目录；不传时保持原来的默认路径。
+    parser.add_argument(
+        '--output-dir', type=str, default=None,
+        help='output directory (default: model/resnet50[-int8])')
     args = parser.parse_args()
-    model = torch.load(args.ckpt).module
+    checkpoint_path = os.path.abspath(os.path.expanduser(args.ckpt))
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
+    model = torch.load(checkpoint_path).module
     
-    save_root = f"model/resnet50-int8"
+    default_output_dir = "model/resnet50-int8"
     if args.fp16:
-        save_root = f"model/resnet50"
+        default_output_dir = "model/resnet50"
         quantize.disable_quantization(model).apply()
+    # 用户显式指定输出目录时，不再受 fp16/int8 默认目录名称限制。
+    save_root = os.path.abspath(os.path.expanduser(
+        args.output_dir if args.output_dir is not None else default_output_dir))
     os.makedirs(save_root, exist_ok=True)
 
     model.eval()

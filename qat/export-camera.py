@@ -252,6 +252,14 @@ def parse_args():
     parser.add_argument('--ckpt', type=str, default='model/daocc_ptq.pth')
     parser.add_argument('--fp16', action='store_true')
     parser.add_argument('--mode', type=str, default='bilinear')
+    # 可指定示例输入文件；不传时保持原来的默认路径。
+    parser.add_argument(
+        '--example-data', type=str, default='example-data/example-data.pth',
+        help='example input .pth used for camera ONNX export')
+    # 可指定 ONNX 输出目录；不传时根据精度沿用原目录。
+    parser.add_argument(
+        '--output-dir', type=str, default=None,
+        help='output directory (default: model/resnet50[-int8])')
     args = parser.parse_args()
     return args
 
@@ -259,14 +267,24 @@ def parse_args():
 def main():
     args = parse_args()
 
-    model = torch.load(args.ckpt).module
-    save_root = f"model/resnet50-int8"
+    checkpoint_path = os.path.abspath(os.path.expanduser(args.ckpt))
+    example_data_path = os.path.abspath(os.path.expanduser(args.example_data))
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
+    if not os.path.isfile(example_data_path):
+        raise FileNotFoundError(f"Example data does not exist: {example_data_path}")
+
+    model = torch.load(checkpoint_path).module
+    default_output_dir = "model/resnet50-int8"
     if args.fp16:
-        save_root = f"model/resnet50"
+        default_output_dir = "model/resnet50"
         quantize.disable_quantization(model).apply()
+    # 用户显式指定输出目录时，不再受 fp16/int8 默认目录名称限制。
+    save_root = os.path.abspath(os.path.expanduser(
+        args.output_dir if args.output_dir is not None else default_output_dir))
     os.makedirs(save_root, exist_ok=True)
 
-    data = torch.load("example-data/example-data.pth")
+    data = torch.load(example_data_path)
     img = data["img"].data[0].cuda()
     img_ref_points = torch.zeros([1, 324000, 1, 1, 3]).cuda()
 

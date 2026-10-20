@@ -28,6 +28,8 @@ import libpybev
 model = os.environ["DEBUG_MODEL"]
 precision = os.environ["DEBUG_PRECISION"]
 data  = os.environ["DEBUG_DATA"]
+#* 可直接指定外部模型目录；未指定时兼容原来的 model/<模型名> 路径。
+model_dir = os.environ.get("DEBUG_MODEL_DIR") or f"model/{model}"
 
 image_names = [
     "0-FRONT.jpg",
@@ -54,11 +56,11 @@ img_aug_matrix = tensor.load(f"{data}/img_aug_matrix.tensor")
 points = tensor.load(f"{data}/points.tensor")
 
 core = libpybev.load_bevfusion(
-    f"model/{model}/build/camera.backbone.plan",
-    f"model/{model}/build/camera.vtransform.plan",
-    f"model/{model}/lidar.backbone.xyz.onnx",
-    f"model/{model}/build/fuser.plan",
-    f"model/{model}/build/head.bbox.plan",
+    f"{model_dir}/build/camera.backbone.plan",
+    f"{model_dir}/build/camera.vtransform.plan",
+    f"{model_dir}/lidar.backbone.xyz.onnx",
+    f"{model_dir}/build/fuser.plan",
+    f"{model_dir}/build/head.bbox.plan",
     precision
 )
 

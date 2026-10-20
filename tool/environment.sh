@@ -23,16 +23,23 @@
 
 # export CUDA_VISIBLE_DEVICES=2
 
-export TensorRT_Lib=/home/cf206/local/TensorRT-8.5.3.1/lib
-export TensorRT_Inc=/home/cf206/local/TensorRT-8.5.3.1/include
-export TensorRT_Bin=/home/cf206/local/TensorRT-8.5.3.1/bin
+#* TensorRT 安装根目录，需要改成你实际解压或安装的位置。
+#* TensorRT 8.5.3 系统安装路径。
+export TensorRT_Lib=/usr/lib/x86_64-linux-gnu
+export TensorRT_Inc=/usr/include/x86_64-linux-gnu
+export TensorRT_Bin=/usr/src/tensorrt/bin
 
-export CUDA_Lib=/home/cf206/local/cuda/lib64
-export CUDA_Inc=/home/cf206/local/cuda/include
-export CUDA_Bin=/home/cf206/local/cuda/bin
-export CUDA_HOME=/home/cf206/local/cuda
+#* CUDA 11.8 安装路径。
+export CUDA_HOME=/usr/local/cuda
+export CUDA_Lib=$CUDA_HOME/lib64
+export CUDA_Inc=$CUDA_HOME/include
+export CUDA_Bin=$CUDA_HOME/bin
 
-export CUDNN_Lib=/home/cf206/local/cuda/lib64
+#* APT 安装的 cuDNN 8.6 位于系统库目录。
+export CUDNN_Lib=/usr/lib/x86_64-linux-gnu
+
+#* WSL2 由 Windows 显卡驱动提供 libcuda.so，必须加入动态库搜索路径。
+export CUDA_Driver_Lib=/usr/lib/wsl/lib
 
 # export TensorRT_Lib=${TENSORRT_LIB}
 # export TensorRT_Inc=${TENSORRT_INCLUDE}
@@ -50,12 +57,15 @@ export CUDNN_Lib=/home/cf206/local/cuda/lib64
 export SPCONV_CUDA_VERSION=11.4
 
 # resnet50/resnet50-int8/swint
-export DEBUG_MODEL=resnet50
+export DEBUG_MODEL=${DEBUG_MODEL:-resnet50}
+
+#* 可选：直接指定包含 ONNX 模型及 build 目录的路径；留空时仍使用 model/$DEBUG_MODEL。
+export DEBUG_MODEL_DIR=${DEBUG_MODEL_DIR:-}
 
 # fp16/int8
-export DEBUG_PRECISION=fp16
-export DEBUG_DATA=example-data
-export USE_Python=OFF
+export DEBUG_PRECISION=${DEBUG_PRECISION:-fp16}
+export DEBUG_DATA=${DEBUG_DATA:-example-data}
+export USE_Python=${USE_Python:-OFF}
 
 # check the configuration path
 # clean the configuration status
@@ -72,6 +82,7 @@ fi
 
 echo "=========================================================="
 echo "||  MODEL: $DEBUG_MODEL"
+echo "||  MODEL DIR: ${DEBUG_MODEL_DIR:-model/$DEBUG_MODEL}"
 echo "||  PRECISION: $DEBUG_PRECISION"
 echo "||  DATA: $DEBUG_DATA"
 echo "||  USEPython: $USE_Python"
@@ -93,7 +104,8 @@ if [ "$USE_Python" == "ON" ]; then
 fi
 
 export PATH=$TensorRT_Bin:$CUDA_Bin:$PATH
-export LD_LIBRARY_PATH=$TensorRT_Lib:$CUDA_Lib:$CUDNN_Lib:$BuildDirectory:$LD_LIBRARY_PATH
+#* 优先加载 WSL2 的真实 NVIDIA 驱动库，避免运行时找不到 libcuda.so。
+export LD_LIBRARY_PATH=$CUDA_Driver_Lib:$TensorRT_Lib:$CUDA_Lib:$CUDNN_Lib:$BuildDirectory:$LD_LIBRARY_PATH
 export PYTHONPATH=$BuildDirectory:$PYTHONPATH
 export ConfigurationStatus=Success
 

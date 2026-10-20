@@ -11,7 +11,7 @@ This repository contains sources and model for [DAOcc](https://github.com/AlphaP
 |   DAOcc   |   TensorRT    |     FP16      |  60.27  |  65.22  |  54.25   |  83.0   |      104.9      |
 |   DAOcc   |   TensorRT    |   FP16+INT8   |  59.56  |  64.71  |  53.86   |  111.5  |      153.8      |
 - Note: Inference speed was measured on an RTX 4090 GPU using 50 nuScenes validation samples (average result).
-  - Since the number of lidar points is the main reason that affects the FPS. 
+  - Since the number of lidar points is the main reason that affects the FPS.
   - Please refer to the readme of [3DSparseConvolution](/libraries/3DSparseConvolution/README.md) for more details.
 
 ## Model and Data
@@ -35,7 +35,7 @@ The data in the performance table was obtained using TensorRT-8.5.3.1, cuda-11.8
 
 ## GetStart
 ```
-git clone --recursive https://github.com/AlphaPlusTT/CUDA-DAOcc
+git clone --recursive https://github.com/w1394945493/CUDA-DAOcc.git
 cd CUDA-DAOcc
 ```
 

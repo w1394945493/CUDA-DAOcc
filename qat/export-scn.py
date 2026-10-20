@@ -45,6 +45,11 @@ if __name__ == "__main__":
     parser.add_argument("--inverse", action="store_true", help="Transfer the coordinate order of the index from xyz to zyx")
 
     args = parser.parse_args()
+    checkpoint_path = os.path.abspath(os.path.expanduser(args.ckpt))
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
+    # 展开用户目录并转换为绝对路径；允许只提供当前目录下的文件名。
+    args.save = os.path.abspath(os.path.expanduser(args.save))
     inverse_indices = args.inverse
     if inverse_indices:
         args.save = os.path.splitext(args.save)[0] + ".zyx.onnx"
@@ -52,7 +57,7 @@ if __name__ == "__main__":
         args.save = os.path.splitext(args.save)[0] + ".xyz.onnx"
     
     os.makedirs(os.path.dirname(args.save), exist_ok=True)
-    model = torch.load(args.ckpt).module
+    model = torch.load(checkpoint_path).module
     model.eval().cuda().half()
     model = model.encoders.lidar.backbone
 
