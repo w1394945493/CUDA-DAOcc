@@ -261,3 +261,20 @@ python tools/vis_occ3d.py \
 
 python tools/vis_occ3d.py \
   /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/visualization_trt/scene-0916/occ/1538984248948287-c567f9b8e9f34817acdc9c49d791c557_gt.npy
+
+# 复现DAOcc论文 图4结果
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+python qat/profile-fig4.py \
+  --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/fig4
+
+# 复现DAOcc论文 图5结果
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+
+python qat/visualize-fig5.py \
+  --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/fig5 \
+  --num-samples 100
