@@ -183,6 +183,25 @@ class BEVFusion {
 
   void print() { core_->print(); }
 
+  // *=================== 向 Python 提供模块计时接口 ===================
+  // 预热时关闭计时，正式遍历数据集时开启，沿用现有五模块计时范围。
+  void set_timer(bool enable) { core_->set_timer(enable); }
+  // Python 单独控制 C++ 计时日志，保留 CSV 所需数据。
+  void set_timer_verbose(bool verbose) { core_->set_timer_verbose(verbose); }
+
+  // * 返回最近一次计时结果，Python 可按样本 token 保存 CSV 并汇总均值。
+  py::dict last_module_latency() const {
+    const auto timing = core_->last_module_latency();
+    py::dict result;
+    result["lidar_ms"] = timing.lidar_ms;
+    result["camera_ms"] = timing.camera_ms;
+    result["fusion_decoder_ms"] = timing.fusion_decoder_ms;
+    result["occ_head_ms"] = timing.occ_head_ms;
+    result["object_head_ms"] = timing.object_head_ms;
+    result["total_ms"] = timing.total_ms;
+    return result;
+  }
+
   // void update(py::array camera2lidar, py::array camera_intrinsics, py::array lidar2image, py::array img_aug_matrix) {
   //   auto t_lidar2image = convert_to(lidar2image);
   //   auto t_img_aug_matrix = convert_to(img_aug_matrix);
@@ -297,7 +316,13 @@ class BEVFusion {
 PYBIND11_MODULE(libpybev, m) {
   py::class_<BEVFusion, shared_ptr<BEVFusion>>(m, "BEVFusion")
       .def("forward", &BEVFusion::forward, py::arg("images"), py::arg("img_ref_points"), py::arg("points"), py::arg("with_normalization")=true, py::arg("with_dlpack")=false)
-      .def("print", &BEVFusion::print);
+      // .def("print", &BEVFusion::print);
+      // * 保留原 print 接口，同时开放计时开关和最近一次耗时读取。
+      .def("print", &BEVFusion::print)
+      .def("set_timer", &BEVFusion::set_timer)
+      // 向测速脚本开放日志开关。
+      .def("set_timer_verbose", &BEVFusion::set_timer_verbose)
+      .def("last_module_latency", &BEVFusion::last_module_latency);
 
   m.def("load_bevfusion", BEVFusion::load_instance);
   // dlopen("libcustom_layernorm.so", RTLD_NOW);

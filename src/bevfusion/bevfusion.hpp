@@ -50,6 +50,16 @@ struct CoreParameter {
   head::object::CenterHeadParameter object;
 };
 
+// * 保存一次 forward_timer 的五个模块耗时，单位均为毫秒。
+struct ModuleLatency {
+  float lidar_ms = 0.0f;
+  float camera_ms = 0.0f;
+  float fusion_decoder_ms = 0.0f;
+  float occ_head_ms = 0.0f;
+  float object_head_ms = 0.0f;
+  float total_ms = 0.0f;
+};
+
 class Core {
  public:
   virtual ~Core() = default;
@@ -59,6 +69,9 @@ class Core {
 
   virtual void print() = 0;
   virtual void set_timer(bool enable) = 0;
+  // * 关闭计时日志时仍然记录各模块耗时。
+  virtual void set_timer_verbose(bool verbose) = 0;
+  virtual ModuleLatency last_module_latency() const = 0;
 
   // virtual void update(const float *camera2lidar, const float *camera_intrinsics, const float *lidar2image,
   //                     const float *img_aug_matrix, void *stream = nullptr) = 0;

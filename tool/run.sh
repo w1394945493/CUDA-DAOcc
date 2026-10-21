@@ -47,8 +47,16 @@ while [ $# -gt 0 ]; do
             DEBUG_PRECISION=$2
             shift 2
             ;;
+        --latency-csv)
+            if [ $# -lt 2 ]; then
+                echo "Error: --latency-csv requires a path."
+                exit 2
+            fi
+            LATENCY_CSV=$2
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: bash tool/run.sh [--model-dir PATH] [--data-dir PATH] [--precision fp16|int8]"
+            echo "Usage: bash tool/run.sh [--model-dir PATH] [--data-dir PATH] [--precision fp16|int8] [--latency-csv PATH]"
             exit 0
             ;;
         *)
@@ -84,5 +92,5 @@ make -j
 
 cd ..
 
-#* 第四个参数传入可选模型目录；未配置时由 C++ 继续使用 model/$DEBUG_MODEL。
-./build/bevfusion "$DEBUG_DATA" "$DEBUG_MODEL" "$DEBUG_PRECISION" "$DEBUG_MODEL_DIR"
+#* 第四个参数传入可选模型目录；第五个参数传入逐次耗时 CSV 路径。
+./build/bevfusion "$DEBUG_DATA" "$DEBUG_MODEL" "$DEBUG_PRECISION" "$DEBUG_MODEL_DIR" "$LATENCY_CSV"

@@ -47,11 +47,17 @@ class EventTimer {
     checkRuntime(cudaEventRecord(end_, stream_));
     checkRuntime(cudaEventSynchronize(end_));
     checkRuntime(cudaEventElapsedTime(&times, begin_, end_));
-    printf("[⏰ %s]: \t%.5f ms\n", prefix, times);
+    // 原打印保留；静默模式仍执行完整计时和同步。
+    // printf("[⏰ %s]: \t%.5f ms\n", prefix, times);
+    if (verbose_) printf("[⏰ %s]: \t%.5f ms\n", prefix, times);
     return times;
   }
 
+  // 独立控制日志，不影响测量结果。
+  void set_verbose(bool verbose) { verbose_ = verbose; }
+
  private:
+  bool verbose_ = true;  // 默认保留原调用方输出。
   cudaStream_t stream_ = nullptr;
   cudaEvent_t begin_ = nullptr, end_ = nullptr;
 };

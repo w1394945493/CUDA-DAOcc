@@ -34,6 +34,7 @@
 // #include <stb_image_write.h>
 
 #include <fstream> // 用于文件输入输出
+#include <iomanip>
 #include <iostream>
 
 #include "bevfusion/bevfusion.hpp"
@@ -309,6 +310,7 @@ int main(int argc, char **argv)
   const char *model = "resnet50int8";
   const char *precision = "int8";
   std::string model_dir;
+  std::string latency_csv = "latency.csv";
 
   if (argc > 1)
     data = argv[1];
@@ -321,6 +323,9 @@ int main(int argc, char **argv)
     model_dir = argv[4];
   else
     model_dir = nv::format("model/%s", model);
+  // * 第五个参数指定逐次耗时 CSV；未指定时写入当前工作目录。
+  if (argc > 5 && strlen(argv[5]) > 0)
+    latency_csv = argv[5];
   // dlopen("libcustom_layernorm.so", RTLD_NOW);
   // 显式加载插件库
   // loadPluginLibrary("/home/cf206/project/Lidar_AI_Solution/amirstan_plugin/build/lib/libamirstan_plugin.so");
@@ -336,7 +341,8 @@ int main(int argc, char **argv)
   cudaStreamCreate(&stream);
 
   core->print();
-  core->set_timer(true);
+  // * 预热阶段关闭计时，避免将首次执行的额外开销纳入统计。
+  core->set_timer(false);
 
   // Load matrix to host
   // auto camera2lidar = nv::Tensor::load(nv::format("%s/camera2lidar.tensor", data));
@@ -364,6 +370,7 @@ int main(int argc, char **argv)
   auto img_ref_points = nv::Tensor::loadbinary(nv::format("%s/img_ref_points.bin", data), std::vector<int64_t>{1, -1, 1, 1, 3}, nv::DataType::Float32);
   img_ref_points = img_ref_points.to_half(stream);
 
+  // *================== 预热 ==============================
   // warmup
   for (int i = 0; i < 3; ++i)
   {
@@ -371,10 +378,50 @@ int main(int argc, char **argv)
   }
   std::cout << "[CUSTOM] warm up end." << std::endl;
 
-  for (int i = 0; i < 10; ++i)
+  // *=================== 逐次保存模块耗时 ===================
+  // 当前示例只加载一帧，repeat_index 表示同一帧的重复推理次数。
+  std::ofstream latency_file(latency_csv);
+  if (!latency_file) {
+    std::cerr << "Cannot open latency CSV: " << latency_csv << std::endl;
+    free_images(images);
+    checkRuntime(cudaStreamDestroy(stream));
+    return 1;
+  }
+  latency_file << "repeat_index,num_points,lidar_ms,camera_ms,fusion_decoder_ms,"
+                  "occ_head_ms,object_head_ms,total_ms\n";
+  latency_file << std::fixed << std::setprecision(5);
+
+  core->set_timer(true);
+  bevfusion::ModuleLatency sum_latency;
+  const int measured_repeats = 10;
+  for (int i = 0; i < measured_repeats; ++i)
   {
     core->forward((const unsigned char**)images.data(), img_ref_points.ptr<nvtype::half>(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);
+    const auto latency = core->last_module_latency();
+    latency_file << i + 1 << ',' << lidar_points.size(0) << ','
+                 << latency.lidar_ms << ',' << latency.camera_ms << ','
+                 << latency.fusion_decoder_ms << ',' << latency.occ_head_ms << ','
+                 << latency.object_head_ms << ',' << latency.total_ms << '\n';
+    sum_latency.lidar_ms += latency.lidar_ms;
+    sum_latency.camera_ms += latency.camera_ms;
+    sum_latency.fusion_decoder_ms += latency.fusion_decoder_ms;
+    sum_latency.occ_head_ms += latency.occ_head_ms;
+    sum_latency.object_head_ms += latency.object_head_ms;
+    sum_latency.total_ms += latency.total_ms;
   }
+  latency_file.close();
+
+  // *=================== 输出相同一帧多次推理的平均耗时 ===================
+  const float count = static_cast<float>(measured_repeats);
+  std::cout << std::fixed << std::setprecision(3)
+            << "Mean latency over " << measured_repeats << " repeats (ms):\n"
+            << "  LiDAR Backbone: " << sum_latency.lidar_ms / count << '\n'
+            << "  Camera Backbone: " << sum_latency.camera_ms / count << '\n'
+            << "  Fusion + decoder: " << sum_latency.fusion_decoder_ms / count << '\n'
+            << "  Occupancy Head: " << sum_latency.occ_head_ms / count << '\n'
+            << "  Object Head: " << sum_latency.object_head_ms / count << '\n'
+            << "  Total: " << sum_latency.total_ms / count << '\n'
+            << "Latency CSV: " << latency_csv << std::endl;
 
   // evaluate inference time
   // std::vector<int> occ_pred = core->forward(lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);

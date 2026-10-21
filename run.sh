@@ -172,3 +172,92 @@ env -u LD_LIBRARY_PATH \
     /home/wys/wangyushen/forks/CUDA-DAOcc/occ_pred.txt \
     --boxes /home/wys/wangyushen/forks/CUDA-DAOcc/object_pred.txt \
     --lidar2ego /home/wys/wangyushen/data/Datasets/example/example-data/example-data.pth
+
+# =================================================================================================#
+# 6. 测速
+# Python 加载数据、启动推理和保存统计，五个模块仍在 C++ 内执行。 Python 一次调用完整部署流程，再读取五个模块的耗时，并不是分别调用五次。
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+source tool/environment.sh
+
+
+python qat/benchmark-latency.py \
+  --backend tensorrt \
+  --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --model-dir /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/tensorrt-int8 \
+  --precision int8 \
+  --split val \
+  --warmup 20 \
+  --max-samples 50 \
+  --count-params \
+  --memory-interval 0.1 \
+  --latency-csv /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/results/int8_latency.csv \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/predictions
+
+# 可视化trt预测结果
+cd /home/wys/wangyushen/forks/CUDA-DAOcc/DAOcc
+python tools/visualize.py \
+  /home/wys/wangyushen/forks/DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_wo_mask_custom.yaml \
+  --mode pred \
+  --split val \
+  --pred-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/predictions \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/visualization \
+  --bbox-thickness 2 \
+  --data.workers_per_gpu 2
+
+# 可视化占据预测结果
+python tools/vis_occ3d.py \
+  /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/visualization/scene-0916/occ/1538984253447765-b4ff30109dd14c89b24789dc5713cf8c.npy
+
+python tools/vis_occ3d.py \
+  /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/visualization_trt/scene-0916/occ/1538984248948287-c567f9b8e9f34817acdc9c49d791c557_gt.npy
+
+
+# pytorch 32
+python qat/benchmark-latency.py \
+  --backend pytorch \
+  --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
+  --precision fp32 \
+  --split val \
+  --warmup 20 \
+  --max-samples 50 \
+  --count-params \
+  --memory-interval 0.1 \
+  --latency-csv /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/pytorch_fp32/results/pytorch_fp32_latency.csv \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/pytorch_fp32/predictions
+
+# pytorch 16
+python qat/benchmark-latency.py \
+  --backend pytorch \
+  --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
+  --precision fp16 \
+  --split val \
+  --warmup 20 \
+  --max-samples 50 \
+  --count-params \
+  --memory-interval 0.1 \
+  --latency-csv /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/pytorch_fp16/results/pytorch_fp16_latency.csv \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/pytorch_fp16/predictions
+
+
+# 可视化trt预测结果
+cd /home/wys/wangyushen/forks/CUDA-DAOcc/DAOcc
+python tools/visualize.py \
+  /home/wys/wangyushen/forks/DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_wo_mask_custom.yaml \
+  --mode pred \
+  --split val \
+  --pred-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/pytorch_fp16/predictions \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/pytorch_fp16/visualization \
+  --bbox-thickness 2 \
+  --data.workers_per_gpu 2
+
+# 可视化占据预测结果
+python tools/vis_occ3d.py \
+  /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/pytorch_fp16/visualization/scene-0916/occ/1538984253447765-b4ff30109dd14c89b24789dc5713cf8c.npy
+
+python tools/vis_occ3d.py \
+  /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/visualization_trt/scene-0916/occ/1538984248948287-c567f9b8e9f34817acdc9c49d791c557_gt.npy
