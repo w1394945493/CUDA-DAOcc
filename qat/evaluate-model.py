@@ -1,6 +1,7 @@
 """一次推理，同时评估 DAOcc 检测、Occ3D mIoU 和 Ray-IoU。
 
 支持 PyTorch fp32/fp16 和 TensorRT int8/fp16；完整遍历有真值的 split。
+--inference-mode stream 使用 PyTorch EMA；默认 single 保持原单帧评估。
 """
 
 import argparse
@@ -34,6 +35,11 @@ def export_tables(result_dir, summary):
     # * 表格只整理本次实测结果，不混入论文数值；JSON 保持原指标单位。
     metrics = summary['metrics']
     label = f"DAOcc ({summary['backend']} {summary['precision']})"
+    #* （temporal) 表格标明单帧/EMA，避免不同实验的结果行名称相同。
+    if summary.get('inference_mode') == 'stream':
+        label = f"TemporalDAOcc EMA alpha={summary['temporal']['alpha']} ({summary['backend']} {summary['precision']})"
+    else:
+        label += ' single'
 
     def percent(key, scale=1):
         value = metrics.get(key)
@@ -119,6 +125,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
     parser.add_argument('--backend', choices=['pytorch', 'tensorrt'], default='pytorch')
+    #* （temporal) 默认保留原单帧评估；stream 目前只接入 PyTorch EMA。
+    parser.add_argument('--inference-mode', choices=['single', 'stream'], default='single')
+    #* （temporal) 只覆盖本次评估，不改写配置文件；0 是同流式顺序下的无历史对照。
+    parser.add_argument('--ema-alpha', type=float, default=None,
+                        help='stream 模式的历史保留权重 [0,1]；不传则使用配置值')
     parser.add_argument('--precision', choices=['fp32', 'fp16', 'int8'])
     parser.add_argument('--ckpt', help='原始 PyTorch checkpoint')
     parser.add_argument('--model-dir', help='已构建的 TensorRT 引擎与 LiDAR ONNX 目录')
@@ -130,7 +141,14 @@ def parse_args():
     parser.add_argument('--result-dir', required=True, help='评估 JSON 与检测评估文件保存目录')
     parser.add_argument('--out-dir', help='可选：逐帧预测保存目录，按场景分组')
     args = parser.parse_args()
+    if args.ema_alpha is not None:
+        if args.inference_mode != 'stream':
+            parser.error('--ema-alpha 只能用于 --inference-mode stream')
+        if not math.isfinite(args.ema_alpha) or not 0 <= args.ema_alpha <= 1:
+            parser.error('--ema-alpha 必须是 [0,1] 内的有限数值')
     args.precision = args.precision or ('fp32' if args.backend == 'pytorch' else 'int8')
+    if args.inference_mode == 'stream' and args.backend != 'pytorch':
+        parser.error('stream 目前仅支持 PyTorch fp32/fp16，TensorRT 尚未接入 EMA')
     if args.backend == 'pytorch' and (not args.ckpt or args.precision == 'int8'):
         parser.error('PyTorch 需要 --ckpt，precision 仅支持 fp32/fp16')
     if args.backend == 'tensorrt' and (not args.model_dir or args.precision == 'fp32'):
@@ -209,12 +227,96 @@ def normalize_prediction(prediction):
     return result
 
 
+def fix_evaluation_sweeps(pipeline):
+    #* 仅修改评估用 pipeline 的副本，训练配置不变；兼容包装器内的 transforms。
+    settings = []
+    for transform in pipeline:
+        if not isinstance(transform, dict):
+            continue
+        if transform.get('type') == 'LoadPointsFromMultiSweeps':
+            transform['test_mode'] = True
+            settings.append(dict(type=transform['type'], test_mode=True,
+                                 sweeps_num=transform.get('sweeps_num', 10),
+                                 selection='first N sweeps in info order; all if fewer'))
+        if isinstance(transform.get('transforms'), (list, tuple)):
+            settings.extend(fix_evaluation_sweeps(transform['transforms']))
+    return settings
+
+
+def inference_indices(infos, mode):
+    #* （temporal) 推理排序与评估排序分离；只重排索引，不改动 dataset.data_infos。
+    indices = list(range(len(infos)))
+    if mode == 'stream':
+        indices.sort(key=lambda i: (infos[i]['scene_token'], infos[i]['timestamp']))
+    return indices
+
+
+def infer_single(core, loader, backend, benchmark, view_transform, save):
+    import torch
+    import numpy as np
+    from tqdm import tqdm
+    results = []
+    with torch.no_grad():
+        for index, data in enumerate(tqdm(loader, desc='单帧推理', unit='帧')):
+            if backend == 'pytorch':
+                prediction = core.forward(core.prepare(data))
+            else:
+                images, refs, points = benchmark.prepare_inputs(data, view_transform, np)
+                prediction = core.forward(images, refs, points, with_normalization=False)
+            prediction = normalize_prediction(prediction)
+            results.append(prediction)
+            save(index, prediction)
+    return results
+
+
+def infer_stream(core, loader, indices, dataset, save):
+    import torch
+    from tqdm import tqdm
+    #* （temporal) 一份 EMA 记忆沿场景时间顺序更新；首帧不使用其他场景的记忆。
+    results = [None] * len(dataset)
+    state, previous_scene, previous_time = None, None, None
+    resets = dict(scene_starts=0, time_gaps=0)
+    try:
+        with torch.no_grad():
+            for position, batch in enumerate(tqdm(loader, total=len(indices), desc='流式 EMA 推理', unit='帧')):
+                if position >= len(indices):
+                    raise RuntimeError('流式数据加载器返回了多余样本')
+                index = indices[position]
+                info = dataset.data_infos[index]
+                scene, timestamp = info['scene_token'], float(info['timestamp']) / 1e6
+                if scene != previous_scene:
+                    state = None
+                    resets['scene_starts'] += 1
+                elif not 0 < timestamp-previous_time <= core.model.max_time_gap:
+                    state = None
+                    resets['time_gaps'] += 1
+                data = core.prepare(batch)
+                outputs, state = core.model.forward_stream(data, state)
+                if len(outputs) != 1:
+                    raise ValueError('流式评估要求 batch size=1')
+                prediction = normalize_prediction(outputs[0])
+                #* （temporal) 放回原数据集索引，检测/mIoU/Ray-IoU 共用这一正确对应的列表。
+                results[index] = prediction
+                save(index, prediction)
+                previous_scene, previous_time = scene, timestamp
+        if any(result is None for result in results):
+            raise RuntimeError('流式推理未覆盖全部样本，停止评估以避免预测与真值错位')
+        return results, resets
+    finally:
+        # （temporal) 函数结束释放缓存引用；后续统一释放模型，给 Ray-IoU 腾出显存。
+        state = None
+
+
 def main():
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
     daocc_root = Path(args.daocc_root).expanduser().resolve() if args.daocc_root else root / 'DAOcc'
     if not (daocc_root / 'mmdet3d').is_dir():
         raise FileNotFoundError(daocc_root / 'mmdet3d')
+    #* （temporal) 新组件来自 CUDA-DAOcc 子仓库，底层 mmdet3d 可复用外部已编译版本。
+    sys.path.insert(0, str(root / 'DAOcc'))
+    import models
+    import datasets
     sys.path.insert(0, str(daocc_root))
     sys.path.insert(0, str(root / 'build'))
     # * 复用已有后端和输入准备，导入不会执行测速脚本的 main。
@@ -229,6 +331,34 @@ def main():
     from mmdet.apis import set_random_seed
     from mmdet3d.datasets import build_dataset, build_dataloader
     from mmdet3d.utils import recursive_eval
+    from torch.utils.data import Subset
+
+    # （temporal) 注册不会执行推理；完整配置与时序 overlay 配置均可读取。
+    from models.TemporalDAOcc.model import TemporalDAOcc
+    from datasets.temporal_daocc import TemporalNuScenesDataset
+    import yaml
+    config_path = Path(args.config).expanduser().resolve()
+    overlay = yaml.safe_load(config_path.read_text())
+    if 'base_config' in overlay:
+        configs.load(str((config_path.parent / overlay.pop('base_config')).resolve()), recursive=True)
+        configs.update(overlay)
+    else:
+        configs.load(str(config_path), recursive=True)
+    cfg = Config(recursive_eval(configs))
+    #* （temporal) 必须先覆盖再读取 temporal，确保模型、JSON 和表格使用同一实际值。
+    if args.ema_alpha is not None:
+        cfg.model.setdefault('temporal', {})['alpha'] = args.ema_alpha
+    temporal = dict(cfg.model.get('temporal', {}))
+    if args.inference_mode == 'stream':
+        if cfg.model.type != 'TemporalDAOcc' or temporal.get('mode', 'ema') != 'ema':
+            raise ValueError('stream 请使用 model.type=TemporalDAOcc、model.temporal.mode=ema 的时序配置')
+        if not 0 <= temporal.get('alpha', .5) <= 1 or temporal.get('max_time_gap', 1.) <= 0:
+            raise ValueError('EMA alpha 应在 [0,1]，max_time_gap 必须为正数')
+    elif cfg.model.type == 'TemporalDAOcc':
+        #* （temporal) single 即严格单帧对照，即便传入时序配置也关闭融合。
+        cfg.model.setdefault('temporal', {})['mode'] = 'off'
+    if args.backend == 'tensorrt' and cfg.model.type == 'TemporalDAOcc':
+        raise ValueError('现有 TensorRT 引擎请使用原单帧配置，时序模型尚未导出部署')
 
     torch.cuda.set_device(args.device)
     # * 在模型加载和推理之前编译/加载 Ray-IoU 的 dvr 扩展；失败时直接停止。
@@ -242,11 +372,19 @@ def main():
         # FP32 对照关闭 TF32；FP16 沿用原测试入口的 MMCV 混合精度。
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-    configs.load(str(Path(args.config).expanduser().resolve()), recursive=True)
-    cfg = Config(recursive_eval(configs))
+    # 配置已在上方读取，时序配置先合成 base_config 再解析表达式。
     dataset_cfg = deepcopy(cfg.data[args.split])
     dataset_cfg.test_mode = True
     dataset_cfg.pop('samples_per_gpu', None)
+    # 数据集 test_mode 不会自动传给点云加载器，必须明确修改 pipeline 内的参数。
+    sweep_settings = fix_evaluation_sweeps(dataset_cfg.pipeline)
+    print(f'评估 sweeps 固定选择：{sweep_settings}', flush=True)
+    if args.inference_mode == 'stream':
+        print(f'流式 EMA 实际 alpha={temporal.get("alpha", .5)}', flush=True)
+    if args.inference_mode == 'stream' or dataset_cfg.type == 'TemporalNuScenesDataset':
+        # （temporal) 只加载当前帧；历史来自 EMA 缓存，不使用离线多帧配对。
+        dataset_cfg.update(type='TemporalNuScenesDataset', temporal_mode='stream',
+                           multi_adj_frame_id_cfg=[1, 2, 1])
     dataset = build_dataset(dataset_cfg)
     if not len(dataset) or getattr(dataset, 'data_type', None) != 'occ3d':
         raise ValueError('需要非空的 Occ3D 数据集，并提供占据及检测真值')
@@ -257,7 +395,9 @@ def main():
         path = Path(info['occ3d']['occ_path']) / 'labels.npz'
         if not path.is_file():
             raise FileNotFoundError(path)
-    loader = build_dataloader(dataset, samples_per_gpu=1,
+    indices = inference_indices(dataset.data_infos, args.inference_mode)
+    inference_dataset = Subset(dataset, indices) if args.inference_mode == 'stream' else dataset
+    loader = build_dataloader(inference_dataset, samples_per_gpu=1,
                              workers_per_gpu=args.workers if args.workers is not None else cfg.data.workers_per_gpu,
                              dist=False, shuffle=False)
     result_dir = Path(args.result_dir).expanduser().resolve()
@@ -289,20 +429,17 @@ def main():
         if hasattr(core, 'set_timer_verbose'):
             core.set_timer_verbose(False)
     core.set_timer(False)
-    results = []
-    # * 完整遍历一次，保持与 data_infos 顺序一致；检测官方评估不能用重复抽样代替。
-    with torch.no_grad():
-        for index, data in enumerate(tqdm(loader, desc='推理', unit='帧')):
-            if args.backend == 'pytorch':
-                prediction = core.forward(core.prepare(data))
-            else:
-                images, refs, points = benchmark.prepare_inputs(data, view_transform, np)
-                prediction = core.forward(images, refs, points, with_normalization=False)
-            prediction = normalize_prediction(prediction)
-            results.append(prediction)
-            if out_dir:
-                info = dataset.data_infos[index]
-                benchmark.save_prediction(out_dir, prediction, index, index, info, {}, np, scenes[info['token']])
+    def save(index, prediction):
+        if out_dir:
+            info = dataset.data_infos[index]
+            benchmark.save_prediction(out_dir, prediction, index, index, info, {}, np, scenes[info['token']])
+
+    # 原单帧循环移至 infer_single；两种推理方式共用下面的评估与输出代码。
+    reset_counts = None
+    if args.inference_mode == 'stream':
+        results, reset_counts = infer_stream(core, loader, indices, dataset, save)
+    else:
+        results = infer_single(core, loader, args.backend, benchmark, view_transform, save)
     # 射线评估也使用 GPU；先释放推理模型，降低同时常驻的显存需求。
     # del core, view_transform, data
     # import gc
@@ -314,13 +451,25 @@ def main():
         # * 计时包装器含循环引用，先显式将参数/缓冲区移到 CPU，再删除整个后端。
         core.model.cpu()
     # TensorRT 后端删除最后一个 Python 引用后，由 C++ 析构释放引擎及其缓冲区。
-    del core, view_transform, data, prediction, loader
+    # （temporal) 输入张量与 EMA state 都局限于推理函数，返回后已释放引用。
+    del core, view_transform, loader
     release_stats = clear_gpu_cache(torch, args.device, '推理后端释放后')
     release_stats['free_before_release_mib'] = free_before / 2**20
     summary = dict(backend=args.backend, precision=args.precision, split=args.split,
                    config=str(Path(args.config).expanduser().resolve()), daocc_root=str(daocc_root),
                    checkpoint=args.ckpt, model_dir=args.model_dir, samples=len(results),
                    miou_camera_mask=True, status='evaluating', metrics={})
+    summary['inference_mode'] = args.inference_mode
+    summary['sweep_loading'] = sweep_settings
+    summary['seed'] = args.seed
+    summary['workers'] = args.workers if args.workers is not None else cfg.data.workers_per_gpu
+    summary['ema_alpha_override'] = args.ema_alpha
+    summary['temporal'] = (dict(mode='ema', alpha=temporal.get('alpha', .5),
+                               max_time_gap=temporal.get('max_time_gap', 1.),
+                               cache='fused BEV', order='scene_token then timestamp',
+                               reset_counts=reset_counts)
+                           if args.inference_mode == 'stream' else dict(mode='off'))
+    summary['inference_indices'] = indices
     # 整卡可用量会受其他进程影响，不把它标为本进程显存。
     summary['gpu_after_inference_release'] = release_stats
     write_json(result_dir / 'evaluation_summary.json', summary)

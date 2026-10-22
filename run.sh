@@ -323,9 +323,21 @@ python qat/evaluate-model.py \
 # ================================================================================#
 # 尝试时序BEV特征融合
 cd /home/wys/wangyushen/forks/CUDA-DAOcc
-python DAOcc/models/TemporalDAOcc/test_temporal.py \
+python DAOcc/scripts/test_temporal.py \
   --visualize \
   --daocc-root /home/wys/wangyushen/forks/DAOcc \
   --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
   --num-samples 2 \
   --out-dir /home/wys/wangyushen/data/Outputs/daocc/temporal_bev
+
+# 流式推理，EMA融合历史BEV特征
+python qat/evaluate-model.py \
+  --config DAOcc/configs/temporal_daocc/temporal_daocc.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --backend pytorch \
+  --precision fp32 \
+  --inference-mode stream \
+  --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
+  --split val \
+  --workers 2 \
+  --result-dir /home/wys/wangyushen/data/Outputs/daocc/evaluation/ema_stream
