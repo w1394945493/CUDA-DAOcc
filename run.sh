@@ -79,6 +79,16 @@ python -m pip install \
   --force-reinstall \
   --no-deps \
   "numpy==1.22.0"
+
+
+python /home/wys/wangyushen/forks/CUDA-DAOcc/DAOcc/tools/create_data.py \
+  nuscenes \
+  --root-path /home/wys/wangyushen/data/Datasets/nuscenes/v1.0-mini \
+  --version v1.0-mini \
+  --out-dir /home/wys/wangyushen/data/Datasets/nuscenes/anns/daocc \
+  --extra-tag nuscenes \
+  --occ3d-root /home/wys/wangyushen/data/Datasets/nuscenes/gts
+
 #===============================================================#
 # 1. 校准
 # Pytorch FP32/16 模型 -> 统计INT8量化参数 -> 带量化器和scale的Pytorch模型
@@ -278,3 +288,44 @@ python qat/visualize-fig5.py \
   --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
   --out-dir /home/wys/wangyushen/data/Outputs/daocc/fig5 \
   --num-samples 100
+
+# ==================================================================================#
+# 占据预测 IoU、mIoU、RayIoU、RayIoU@1、@2、@4，对应 1/2/4 米距离容差、
+# 3D检测：mAP、NDS、3D检测细项：各类别、不同中心距离阈值下的 AP；mATE、mASE、mAOE、mAVE、mAAE，分别衡量位置、尺度、朝向、速度、属性误差
+
+# pytorch 32
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+
+python qat/evaluate-model.py \
+  --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --backend pytorch \
+  --precision fp32 \
+  --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
+  --split val \
+  --workers 2 \
+  --result-dir /home/wys/wangyushen/data/Outputs/daocc/evaluation/pytorch_fp32
+
+# tensorrt INT8
+# 删除所文件
+rm -f /home/wys/.cache/torch_extensions/py38_cu113/dvr/lock
+
+python qat/evaluate-model.py \
+  --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --backend tensorrt \
+  --precision int8 \
+  --model-dir /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/tensorrt-int8 \
+  --split val \
+  --workers 2 \
+  --result-dir /home/wys/wangyushen/data/Outputs/daocc/evaluation/tensorrt_int8
+
+# ================================================================================#
+# 尝试时序BEV特征融合
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+python DAOcc/models/TemporalDAOcc/test_temporal.py \
+  --visualize \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
+  --num-samples 2 \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/temporal_bev
