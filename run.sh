@@ -341,3 +341,51 @@ python qat/evaluate-model.py \
   --split val \
   --workers 2 \
   --result-dir /home/wys/wangyushen/data/Outputs/daocc/evaluation/ema_stream
+
+# 尝试替换为高斯Head
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+python DAOcc/scripts/check_gauss_daocc.py --cuda
+# 完整流程检查
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+python DAOcc/scripts/check_gauss_daocc.py \
+  --full-model \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --num-samples 1
+
+# =================================================================#
+# 复现在surroundocc数据集上结果
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+
+python DAOcc/tools/create_data.py nuscenes \
+  --info-dir /home/wys/wangyushen/data/Datasets/nuscenes/anns/daocc \
+  --surroundocc-root /home/wys/wangyushen/data/Datasets/surroundocc/samples \
+  --out-dir /home/wys/wangyushen/data/Datasets/nuscenes/anns/daocc \
+  --extra-tag nuscenes
+
+# 测速、保存结果
+python qat/benchmark-latency.py \
+  --backend pytorch \
+  --config DAOcc/configs/nuscenes/surroundocc/daocc_surroundocc_custom.yaml \
+  --daocc-root /home/wys/wangyushen/forks/DAOcc \
+  --ckpt /home/wys/wangyushen/data/Weights/daocc/surroundocc/epoch_6.pth \
+  --precision fp16 \
+  --split val \
+  --warmup 5 \
+  --max-samples 5 \
+  --count-params \
+  --memory-interval 0.1 \
+  --latency-csv /home/wys/wangyushen/data/Outputs/daocc/results/surroundocc/pytorch_fp16/results/pytorch_fp16_latency.csv \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/surroundocc/pytorch_fp16/predictions
+
+cd /home/wys/wangyushen/forks/CUDA-DAOcc/DAOcc
+python tools/visualize.py \
+  /home/wys/wangyushen/forks/CUDA-DAOcc/DAOcc/configs/nuscenes/surroundocc/daocc_surroundocc_custom.yaml \
+  --mode pred \
+  --split val \
+  --pred-dir /home/wys/wangyushen/data/Outputs/daocc/results/surroundocc/pytorch_fp16/predictions \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/surroundocc/pytorch_fp16/visualization \
+  --bbox-thickness 2 \
+  --data.workers_per_gpu 2
+
+python tools/vis_occ3d.py \
+  /home/wys/wangyushen/data/Outputs/daocc/results/surroundocc/pytorch_fp16/visualization/scene-0103/occ/1533151603547590-3e8750f331d7499e9b5123e9eb70f2e2.npy

@@ -15,16 +15,22 @@ from pathlib import Path
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, help="原始 DAOcc YAML 配置")
+    parser.add_argument("--config", help="原始 DAOcc YAML 配置")
     parser.add_argument("--daocc-root", default=str(Path(__file__).resolve().parents[1] / "DAOcc"),
                         help="已编译 CUDA 扩展的 DAOcc 仓库")
-    parser.add_argument("--out-dir", default="results/fig4", help="JSON、CSV 保存目录")
+    parser.add_argument("--out-dir", default="results/fig4", help="JSON、CSV 和 PNG/PDF 图表保存目录")
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--sample-token", help="指定点云；默认选验证集中原始关键帧点数最多者")
     parser.add_argument("--total-sweeps", type=int, default=10,
                         help="包含当前帧的总帧数；默认当前帧 + 9 个历史 sweep")
     parser.add_argument("--camera-count", type=int, default=6)
+    #* 仅绘图时不加载模型、数据集或 CUDA，直接复用之前的测量报告。
+    parser.add_argument("--plot-only", metavar="JSON", help="读取 fig4_summary.json，仅生成图表")
+    parser.add_argument("--plot-camera-scope", choices=("single", "all"), default="single",
+                        help="相机图统计单路或全部相机；默认单路，与 CSV 的 gflops 一致")
     args = parser.parse_args()
+    if not args.plot_only and not args.config:
+        parser.error("测量模式需要 --config；已有结果可使用 --plot-only JSON")
     if args.total_sweeps < 1 or args.camera_count < 1:
         parser.error("total-sweeps 和 camera-count 必须为正数")
     return args
@@ -145,8 +151,75 @@ class ConvCounter:
             handle.remove()
 
 
+#* =================== 将实测计算量绘制为论文图4风格 ===================
+def plot_results(report, out_dir, camera_scope="single"):
+    import math
+    import matplotlib
+    # 无窗口后端，适用于 WSL/服务器；避免 Qt xcb 插件冲突。
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    rows = report["results"]
+    # 按设置查找而不是依赖 JSON 行顺序，确保横轴与数值一一对应。
+    def find(module, setting):
+        matches = [r for r in rows if r["module"] == module and r["setting"] == setting]
+        if len(matches) != 1:
+            raise ValueError(f"需要唯一的测量记录：{module} / {setting}")
+        return matches[0]
+
+    camera = [find("camera_backbone_neck", x) for x in ("256x704", "512x1408")]
+    lidar = [find("lidar_sparse_encoder", f"xy=+/-{r}m,z=[-5,3]m") for r in (40, 80)]
+    key = "gflops" if camera_scope == "single" else "all_camera_gflops"
+    values = [[float(r[key]) for r in camera], [float(r["gflops"]) for r in lidar]]
+    if any(not math.isfinite(v) or v <= 0 for pair in values for v in pair):
+        raise ValueError("绘图需要有限且为正的计算量")
+    if camera_scope == "all" and camera[0]["cameras"] != camera[1]["cameras"]:
+        raise ValueError("两种分辨率的相机数量不一致")
+
+    #* 两侧统一使用真实 GFLOPs，不把 LiDAR 的 GFLOPs 误标成论文中的 MFLOPs。
+    # 共享从零开始的纵轴，柱高可直接比较；图注注明这是本脚本的统计口径。
+    scope = "single camera" if camera_scope == "single" else f"{camera[0]['cameras']} cameras"
+    out_dir = Path(out_dir).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with plt.rc_context({"font.family": "DejaVu Serif", "font.size": 12,
+                         "axes.titlesize": 17, "axes.labelsize": 13, "pdf.fonttype": 42}):
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4.8))
+        ymax = max(v for pair in values for v in pair) * 1.20
+        for ax, pair, color, title, labels, xlabel in zip(
+                axes, values, ("#87cee5", "#f4a45b"),
+                ("Camera Encoder", "LiDAR Encoder"),
+                (("256×704", "512×1408"), ("[-40, 40]", "[-80, 80]")),
+                ("Image Resolution (H×W)", "XY Range (m)")):
+            bars = ax.bar([0, 1], pair, width=0.55, color=color, edgecolor="#444444", linewidth=0.8)
+            ax.set_xticks([0, 1]); ax.set_xticklabels(labels)
+            ax.set_title(title); ax.set_xlabel(xlabel); ax.set_ylabel("FLOPs (G)")
+            ax.set_ylim(0, ymax)
+            ax.set_axisbelow(True); ax.grid(axis="y", linestyle="--", alpha=0.35)
+            for bar, value in zip(bars, pair):
+                ax.text(bar.get_x() + bar.get_width()/2, value + ymax*0.015,
+                        f"{value:.3f}", ha="center", va="bottom")
+        fig.text(0.5, 0.035,
+                 f"Measured conv/linear FLOPs = 2 × MACs; camera: backbone + neck ({scope}).\n"
+                 "LiDAR: same aggregated point cloud, z in [-5, 3] m. Paper values are not substituted.",
+                 ha="center", fontsize=9)
+        fig.tight_layout(rect=(0, 0.12, 1, 1))
+        # 保存高分辨率 PNG 与矢量 PDF，便于查看和论文排版。
+        try:
+            for suffix in ("png", "pdf"):
+                path = out_dir / f"fig4_measured_{camera_scope}.{suffix}"
+                fig.savefig(str(path), dpi=300, bbox_inches="tight")
+                print(f"图表已保存：{path.resolve()}")
+        finally:
+            plt.close(fig)
+
+
 def main():
     args = parse_args()
+    #* 读取现有结果可独立画图，不触发 CUDA 扩展导入和模型前向。
+    if args.plot_only:
+        report = json.loads(Path(args.plot_only).expanduser().read_text())
+        plot_results(report, args.out_dir, args.plot_camera_scope)
+        return
     print("加载 DAOcc 依赖与配置……", flush=True)
     sys.path.insert(0, str(Path(args.daocc_root).expanduser().resolve()))
     import numpy as np
@@ -322,6 +395,8 @@ def main():
         writer.writeheader()
         writer.writerows(results)
     print(f"结果已保存：{output.resolve()}")
+    #* 测量完自动绘图；JSON/CSV 已先保存，绘图失败也不会丢失测量结果。
+    plot_results(report, output, args.plot_camera_scope)
 
 
 if __name__ == "__main__":
