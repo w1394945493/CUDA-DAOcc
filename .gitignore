@@ -19,3 +19,4 @@ debug*.yaml
 build/
 *.txt
 *.zip
+local

@@ -99,16 +99,16 @@ python qat/ptq.py \
   --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
   --ckpt /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema.pth \
   --calibrate_batch 300 \
-  --save-path /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema_ptq.pth
+  --save-path /home/wys/wangyushen/data/Weights/daocc_cu121/occ3d_nus_w_mask/epoch_6_ema_ptq.pth
 
 #---------------------------------------------------------------#
 # 2. 导出INT8模型
 # 拆分成五部分，各部分使用的执行后端不一致
 cd /home/wys/wangyushen/forks/CUDA-DAOcc
 
-ptq_model=/home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/epoch_6_ema_ptq.pth
+ptq_model=/home/wys/wangyushen/data/Weights/daocc_cu121/occ3d_nus_w_mask/epoch_6_ema_ptq.pth
 example_data=/home/wys/wangyushen/data/Datasets/example/example-data/example-data.pth
-output_dir=/home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/tensorrt-int8
+output_dir=/home/wys/wangyushen/data/Weights/daocc_cu121/occ3d_nus_w_mask/tensorrt-int8
 
 
 
@@ -122,7 +122,7 @@ python qat/export-camera.py \
 
 # 可视化
 netron \
-  /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/tensorrt-int8/camera.backbone.onnx \
+  /home/wys/wangyushen/data/Weights/daocc_cu121/occ3d_nus_w_mask/tensorrt-int8/camera.backbone.onnx \
   --host 0.0.0.0 \
   --port 8080
 
@@ -144,6 +144,8 @@ python qat/export-scn.py \
 
 #---------------------------------------------------------------#
 # 安装 TensorRT
+# 安装tensorRT的本地APT软件源包，让系统之后可以用apt安装TensorRT
+# 安装位置：系统目录，管理方式：APT管理，多版本共存，较难隔离
 sudo dpkg -i \
   /home/wys/wangyushen/data/nv-tensorrt-local-repo-ubuntu2204-8.5.3-cuda-11.8_1.0-1_amd64.deb
 
@@ -160,13 +162,13 @@ sudo dpkg -i \
 # 4. head.occ 主要使用 FP16 计算类别分数，末尾通过 argmax 输出 INT32 类别编号。
 # 5. INT32 只是 occupancy 最终语义标签的数据类型，不代表 occupancy 卷积使用 INT32 计算。
 bash tool/build_trt_engine.sh \
-  --model-dir /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/tensorrt-int8 \
+  --model-dir /home/wys/wangyushen/data/Weights/daocc_cu121/occ3d_nus_w_mask/tensorrt-int8 \
   --precision int8
 
 # 4. 编译 CUDA-DAOcc 的 C++ 推理程序，并用示例数据运行
 # 先执行bash src/onnx/make_pb.sh  cmake ..  make -j  命令，生成build/bevfusion C++推理程序（可执行程序）
 bash tool/run.sh \
-  --model-dir /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/tensorrt-int8 \
+  --model-dir /home/wys/wangyushen/data/Weights/daocc_cu121/occ3d_nus_w_mask/tensorrt-int8 \
   --data-dir /home/wys/wangyushen/data/Datasets/example/example-data \
   --precision int8
 
@@ -193,25 +195,25 @@ source tool/environment.sh
 python qat/benchmark-latency.py \
   --backend tensorrt \
   --config DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask_custom.yaml \
-  --daocc-root /home/wys/wangyushen/forks/DAOcc \
-  --model-dir /home/wys/wangyushen/data/Weights/daocc/occ3d_nus_w_mask/tensorrt-int8 \
+  --daocc-root DAOcc \
+  --model-dir /home/wys/wangyushen/data/Weights/daocc_cu121/occ3d_nus_w_mask/tensorrt-int8 \
   --precision int8 \
   --split val \
   --warmup 20 \
-  --max-samples 50 \
+  --max-samples 20 \
   --count-params \
   --memory-interval 0.1 \
-  --latency-csv /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/results/int8_latency.csv \
-  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/predictions
+  --latency-csv /home/wys/wangyushen/data/Outputs/daocc_cu121/results/w_mask/tensorrt_int8/results/int8_latency.csv \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc_cu121/results/w_mask/tensorrt_int8/predictions
 
 # 可视化trt预测结果
 cd /home/wys/wangyushen/forks/CUDA-DAOcc/DAOcc
 python tools/visualize.py \
-  /home/wys/wangyushen/forks/DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_wo_mask_custom.yaml \
+  configs/nuscenes/occ3d/daocc_occ3d_nus_wo_mask_custom.yaml \
   --mode pred \
   --split val \
-  --pred-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/predictions \
-  --out-dir /home/wys/wangyushen/data/Outputs/daocc/results/w_mask/tensorrt_int8/visualization \
+  --pred-dir /home/wys/wangyushen/data/Outputs/daocc_cu121/results/w_mask/tensorrt_int8/predictions \
+  --out-dir /home/wys/wangyushen/data/Outputs/daocc_cu121/results/w_mask/tensorrt_int8/visualization \
   --bbox-thickness 2 \
   --data.workers_per_gpu 2
 
@@ -389,3 +391,66 @@ python tools/visualize.py \
 
 python tools/vis_occ3d.py \
   /home/wys/wangyushen/data/Outputs/daocc/results/surroundocc/pytorch_fp16/visualization/scene-0103/occ/1533151603547590-3e8750f331d7499e9b5123e9eb70f2e2.npy
+
+
+# *======================================================================================================#
+# *(10.26) CUDA-DAOcc：CUDA 12.1 环境配置与验证
+
+PIP_CONFIG_FILE=/dev/null \
+PIP_INDEX_URL=https://pypi.org/simple \
+PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com \
+python -m pip install \
+  pytorch-quantization==2.1.3 \
+  --timeout 30 \
+  --retries 2
+
+PIP_CONFIG_FILE=/dev/null \
+PIP_INDEX_URL=https://pypi.org/simple \
+PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com \
+pip install onnx
+
+PIP_CONFIG_FILE=/dev/null PIP_EXTRA_INDEX_URL= \
+pip install onnxsim
+
+PIP_CONFIG_FILE=/dev/null PIP_EXTRA_INDEX_URL= \
+pip install onnxruntime
+
+cd /home/wys/wangyushen/forks/TensorRT-quantization-src/tools/pytorch-quantization
+
+# 使用当前 Torch 和 CUDA 重新编译安装：
+MAX_JOBS=2 python -m pip --disable-pip-version-check install \
+  -v --no-build-isolation --no-cache-dir \
+  --no-deps --force-reinstall .
+
+# 安装后，离开源码目录再验证，确保导入的是安装后的包：
+cd /home/wys/wangyushen/forks/CUDA-DAOcc
+
+python - <<'PY'
+import torch
+from pytorch_quantization import cuda_ext
+from pytorch_quantization import nn as quant_nn
+
+print("扩展路径:", cuda_ext.__file__)
+layer = quant_nn.QuantConv2d(3, 8, 3, padding=1).cuda()
+with torch.no_grad():
+    y = layer(torch.randn(1, 3, 16, 16, device="cuda"))
+torch.cuda.synchronize()
+assert torch.isfinite(y).all()
+print("量化卷积通过:", y.shape)
+PY
+
+# 安装tensorRT
+# TensorRT 8.6.1.6的完整SDK压缩包，解压后即可配置使用，不经过APT安装
+mkdir -p /home/wys/wangyushen/forks/CUDA-DAOcc/local
+tar -xzf \
+  /home/wys/wangyushen/data/download/TensorRT-8.6.1.6.Linux.x86_64-gnu.cuda-12.0.tar \
+  -C /home/wys/wangyushen/forks/CUDA-DAOcc/local
+
+export TRT_ROOT=/home/wys/wangyushen/forks/CUDA-DAOcc/local/TensorRT-8.6.1.6
+export CUDA_HOME=/usr/local/cuda-12.1
+
+export PATH="$TRT_ROOT/bin:$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$TRT_ROOT/lib:$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+hash -r
+
+# * 修改 forks/CUDA-DAOcc/tool/environment.sh 中的内容

@@ -25,18 +25,30 @@
 
 #* TensorRT 安装根目录，需要改成你实际解压或安装的位置。
 #* TensorRT 8.5.3 系统安装路径。
-export TensorRT_Lib=/usr/lib/x86_64-linux-gnu
-export TensorRT_Inc=/usr/include/x86_64-linux-gnu
-export TensorRT_Bin=/usr/src/tensorrt/bin
+# export TensorRT_Lib=/usr/lib/x86_64-linux-gnu
+# export TensorRT_Inc=/usr/include/x86_64-linux-gnu
+# export TensorRT_Bin=/usr/src/tensorrt/bin
+#* CUDA 12.x 路线：使用仓库 local 下独立解压的 SDK，避免混入系统 8.5.3。
+#* 默认路径相对于本脚本定位；也可在 source 前设置 TRT_ROOT 指向其他安装目录。
+export TRT_ROOT="${TRT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/local/TensorRT-8.6.1.6}"
+export TensorRT_Lib="$TRT_ROOT/lib"
+export TensorRT_Inc="$TRT_ROOT/include"
+export TensorRT_Bin="$TRT_ROOT/bin"
 
 #* CUDA 11.8 安装路径。
-export CUDA_HOME=/usr/local/cuda
-export CUDA_Lib=$CUDA_HOME/lib64
-export CUDA_Inc=$CUDA_HOME/include
-export CUDA_Bin=$CUDA_HOME/bin
+# export CUDA_HOME=/usr/local/cuda
+# export CUDA_Lib=$CUDA_HOME/lib64
+# export CUDA_Inc=$CUDA_HOME/include
+# export CUDA_Bin=$CUDA_HOME/bin
+#* cuda 12.1 安装路径
+export CUDA_HOME=/usr/local/cuda-12.1
+export CUDA_Lib="$CUDA_HOME/lib64"
+export CUDA_Inc="$CUDA_HOME/include"
+export CUDA_Bin="$CUDA_HOME/bin"
 
-#* APT 安装的 cuDNN 8.6 位于系统库目录。
-export CUDNN_Lib=/usr/lib/x86_64-linux-gnu
+#* 旧系统默认是 CUDA 11.8 的 cuDNN 8.6；此路径保留为回退，不代表已验证兼容。
+#* 配好 CUDA 12.x 对应 cuDNN 后，可在 source 前 export CUDNN_Lib=/实际路径/lib。
+export CUDNN_Lib=${CUDNN_Lib:-/usr/lib/x86_64-linux-gnu}
 
 #* WSL2 由 Windows 显卡驱动提供 libcuda.so，必须加入动态库搜索路径。
 export CUDA_Driver_Lib=/usr/lib/wsl/lib
@@ -54,7 +66,10 @@ export CUDA_Driver_Lib=/usr/lib/wsl/lib
 # Just used to distinguish the libspconv version, it doesn't affect the version of cuda used by your application
 # For CUDA-11.x:    SPCONV_CUDA_VERSION=11.4
 # For CUDA-12.x:    SPCONV_CUDA_VERSION=12.6
-export SPCONV_CUDA_VERSION=11.4
+# export SPCONV_CUDA_VERSION=11.4
+#* 12.6 是预编译库目录标签，nvcc 仍使用 CUDA_HOME 的 12.1。
+#* 该库与当前运行库/驱动的兼容性还需真实稀疏卷积推理验证。
+export SPCONV_CUDA_VERSION=12.6
 
 # resnet50/resnet50-int8/swint
 export DEBUG_MODEL=${DEBUG_MODEL:-resnet50}

@@ -3,18 +3,21 @@
 This repository contains sources and model for [DAOcc](https://github.com/AlphaPlusTT/DAOcc) inference using CUDA & TensorRT.
 
 ## 3D Object Detection and Occupancy prediction
+
 - We use the [daocc_occ3d_nus_w_mask.yaml](https://github.com/AlphaPlusTT/DAOcc/blob/master/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask.yaml) configuration for TensorRT.
 
 | **Model** | **Framework** | **Precision** | **mAP** | **NDS** | **mIoU** | **FPS** | **FPS(wo det)** |
-|:---------:|:-------------:|:-------------:|:-------:|:-------:|:--------:|:-------:|:---------------:|
-|   DAOcc   |    PyTorch    |     FP32      |  59.43  |  64.70  |  54.33   |   7.1   |       7.8       |
-|   DAOcc   |   TensorRT    |     FP16      |  60.27  |  65.22  |  54.25   |  83.0   |      104.9      |
-|   DAOcc   |   TensorRT    |   FP16+INT8   |  59.56  |  64.71  |  53.86   |  111.5  |      153.8      |
+| :-------------: | :-----------------: | :-----------------: | :-----------: | :-----------: | :------------: | :-----------: | :-------------------: |
+|      DAOcc      |       PyTorch       |        FP32        |     59.43     |     64.70     |     54.33     |      7.1      |          7.8          |
+|      DAOcc      |      TensorRT      |        FP16        |     60.27     |     65.22     |     54.25     |     83.0     |         104.9         |
+|      DAOcc      |      TensorRT      |      FP16+INT8      |     59.56     |     64.71     |     53.86     |     111.5     |         153.8         |
+
 - Note: Inference speed was measured on an RTX 4090 GPU using 50 nuScenes validation samples (average result).
   - Since the number of lidar points is the main reason that affects the FPS.
   - Please refer to the readme of [3DSparseConvolution](/libraries/3DSparseConvolution/README.md) for more details.
 
 ## Model and Data
+
 - The model trained with [daocc_occ3d_nus_w_mask.yaml](https://github.com/AlphaPlusTT/DAOcc/blob/master/configs/nuscenes/occ3d/daocc_occ3d_nus_w_mask.yaml) can be downloaded from [Google Drive](https://drive.google.com/file/d/1C4pRy1eaHgulYPi2qFo8kJrqmBKhxeYo/view?usp=sharing).
 - For quick practice, we provide example data from nuScenes. You can download it from [Google Drive](https://drive.google.com/file/d/158ChxGu1Q27ED3SmCBbw4REjbl4KNrWI/view?usp=sharing). It contains the following:
   1. Camera images from 6 directions.
@@ -23,7 +26,9 @@ This repository contains sources and model for [DAOcc](https://github.com/AlphaP
   4. 10-sweep aggregated point cloud binary file `sweeps_*.bin`.
 
 ## Prerequisites
+
 To build bevfusion, we need to depend on the following libraries:
+
 - CUDA >= 11.0
 - CUDNN >= 8.2
 - TensorRT >= 8.5.0
@@ -34,6 +39,7 @@ To build bevfusion, we need to depend on the following libraries:
 The data in the performance table was obtained using TensorRT-8.5.3.1, cuda-11.8 and cudnn8.9.7 statistics.
 
 ## GetStart
+
 ```
 git clone --recursive https://github.com/w1394945493/CUDA-DAOcc.git
 cd CUDA-DAOcc
@@ -44,6 +50,7 @@ cd CUDA-DAOcc
 #### 1. Configuring the DAOcc runtime environment
 
 [Here](https://github.com/AlphaPlusTT/DAOcc/blob/master/docs/install.md) is the official configuration guide.
+
 > For the final step in the official guide linked above, there's no need to clone the DAOcc codebase, as it already exists in this project path.
 
 After following the above official installation instructions, install these additional dependencies:
@@ -59,6 +66,7 @@ pip install onnxruntime
 ```
 
 #### 2. Download model and nuScenes-example-data.zip
+
 - download pytorch model from [Google Drive](https://drive.google.com/file/d/1C4pRy1eaHgulYPi2qFo8kJrqmBKhxeYo/view?usp=sharing).
 - download nuScenes-example-data.tar.gz from [Google Drive](https://drive.google.com/file/d/158ChxGu1Q27ED3SmCBbw4REjbl4KNrWI/view?usp=sharing).
 
@@ -71,17 +79,22 @@ mkdir model && mv epoch_6_ema.pth model/daocc.pth
 ```
 
 #### 3. Generate PTQ model
+
 - This code uses the [nuScenes Dataset](https://www.nuscenes.org/). You need to download it in order to run PTQ.
 - You need follow the tips [here](https://github.com/AlphaPlusTT/DAOcc/blob/master/docs/data.md) to prepare the data.
+
 ```bash
 ln -s DAOcc/data
 python qat/ptq.py --config=DAOcc/configs/nuscenes/occ3d/daocc_occ3d_nus_wo_mask_v2.yaml --ckpt=model/daocc.pth --calibrate_batch 300
 ```
 
 #### 3. Export INT8 model
+
 Please make sure the following ONNX packages are installed:
+
 - onnx_simplifier==0.4.8
 - onnxsim==0.4.10
+
 ```bash
 python qat/export-camera.py --ckpt=model/daocc_ptq.pth
 python qat/export-transfuser.py --ckpt=model/daocc_ptq.pth
@@ -89,6 +102,7 @@ python qat/export-scn.py --ckpt=model/daocc_ptq.pth --save=model/resnet50-int8/l
 ```
 
 #### 4. Export FP16 model
+
 ```bash
 python qat/export-camera.py --ckpt=model/daocc_ptq.pth --fp16
 python qat/export-transfuser.py --ckpt=model/daocc_ptq.pth --fp16
@@ -98,7 +112,9 @@ python qat/export-scn.py --ckpt=model/daocc_ptq.pth --save=model/resnet50/lidar.
 ### TensorRT Inference
 
 #### 1. Configure the environment.sh
+
 Modify the TensorRT/CUDA/CUDNN/DAOcc variable values in the tool/environment.sh file.
+
 ```bash
 # change the path to the directory you are currently using
 export TensorRT_Lib=/path/to/TensorRT/lib
@@ -126,6 +142,7 @@ export USE_Python=OFF
 ```
 
 - Apply the environment to the current terminal.
+
 ```bash
 . tool/environment.sh
 ```
@@ -133,11 +150,13 @@ export USE_Python=OFF
 #### 5. Compile and run
 
 1. Building the models for tensorRT
+
 ```bash
 bash tool/build_trt_engine.sh
 ```
 
 2. Compile and run the program
+
 ```bash
 # Generate the protobuf code
 bash src/onnx/make_pb.sh
@@ -147,9 +166,11 @@ bash tool/run.sh
 ```
 
 ### Evaluating mAP and mIoU with PyBEV
+
 1. Modify `USE_Python=ON` in environment.sh to enable compilation of python.
 2. Run `bash tool/run.sh` to build the libpybev.so.
 3. Run following command to evaluate mAP and mIoU.
+
 ```bash
 cp qat/test-mAP-for-cuda.py DAOcc/tools
 cd DAOcc
@@ -159,6 +180,7 @@ python tools/test-mAP-for-cuda.py
 ```
 
 ## Thanks
+
 This project makes use of a number of awesome open source libraries, including:
 
 - [Lidar_AI_Solution](https://github.com/NVIDIA-AI-IOT/Lidar_AI_Solution) for TensorRT inference.
